@@ -1,22 +1,10 @@
 
-library(shiny)
-library(ggplot2)
-library(shinydashboard)
-library(leaflet)
-library(dplyr)
-library(data.table)
-library(jsonlite)
-
-##----------------------------------------------------------------------------------##
-## Upload geojson ##
-
-eq <- readRDS("./eq.Rda")
-
-shinyServer(function(input, output, session) {
+(function(input, output, session) {
 
 ## Upload geojson ##
 ##------------------------------------------------------------------------------------##  
 ## map with date range ##
+ 
   
   ##subset quakes by date range
     myQuakes <- function() {
@@ -40,8 +28,8 @@ shinyServer(function(input, output, session) {
   ##leaflet quake map
     ##create a colour palette
     pal <- colorNumeric(
-      palette = "Reds",
-      domain = eq$mag
+      palette = "Spectral",
+      domain = eq$dep
     )
     
     qm <- function() {
@@ -49,24 +37,29 @@ shinyServer(function(input, output, session) {
       
       ## create html for popup
       pu <- paste("<b>Place:</b>", as.character(quake.map$place), "<br>",
-                  "<b>Mag:</b>", as.character(quake.map$mag), "<br>",
-                  "<b>Depth:</b>", as.character(quake.map$Dep), "km<br>",
-                  "<b>Time:</b>", as.character(quake.map$Local.Time), "NST"
+                  "<b>Magnitude:</b>", as.character(quake.map$mag), "<br>",
+                  "<b>Depth:</b>", as.character(quake.map$dep), "km<br>",
+                  "<b>Date&Time:</b>", format(quake.map$Local.Time, "%a %d %b %Y %X %Z"), "<br>"
                   #"<br>","<b>ID:</b>", quake.get$id,"<br>",
                   #"<b>Place:</b>", quake.get$place #noticed some pecularities with the place, need to re-check
       )
       
       tempmap <- leaflet(data=quake.map) %>% 
-        addProviderTiles("Esri.WorldGrayCanvas") %>% 
-        setView(23.90, 38.90, 2) %>% 
+        addProviderTiles("CartoDB.Positron") %>% #Esri.WorldGrayCanvas
+        setView(23.90,28, 2) %>% 
         addCircleMarkers(lng = ~long, lat = ~lat,
                popup = pu,
-               radius = ~mag^2,
-               color = ~pal(mag),
+               radius = ~mag^3/15,
+               color = ~pal(dep),
                stroke = FALSE, 
-               fillOpacity = 0.8
-               #clusterOptions = markerClusterOptions()
-    )
+               fillOpacity = 0.8) %>%
+        addLegend(
+              "bottomright", pal = pal,
+               values = sort(quake.map$dep),
+               title = "Depth (km)"
+               # labFormat = labelFormat()
+        )       
+    
  }
     output$map <- renderLeaflet(qm())
 
@@ -80,24 +73,37 @@ shinyServer(function(input, output, session) {
     timeline <- eventReactive(input$updateButton, {
       quake.graphs <- myQuakes()
    
-      ggplot(quake.graphs, aes(Local.Time, mag, ymin=4, ymax=mag)) +
-        geom_linerange(color='grey') + 
-        geom_point(color='blue', size=1) +
-        scale_y_continuous(name='Magnitude', limits=c(4,8)) +
-        scale_x_datetime(name = 'Date') + 
-        theme_bw()  
+    #  ggplot(quake.graphs, aes(Local.Time, mag, ymin=0.1, ymax=mag)) +
+    #    geom_linerange(color='grey') + 
+    #    geom_point(color='blue', size=0.6) +
+    #    scale_y_continuous(name='Magnitude', limits=c(1,8)) +
+    #    scale_x_datetime(name = 'Date') + 
+    #    theme_bw()  
+    #  ggplotly()
+      
+      plot_ly(data = eq, x = Local.Time, y = mag, size = mag, mode = "markers",
+              color = -dep, colors = "Spectral") %>%
+        layout(title = "Time series scatter plot",
+               scene = list(
+                 xaxis = list(title = "Date"), 
+                 yaxis = list(title = "Magnitude")
+               ))
+        
  }
 )
-    output$timeline <- renderPlot(timeline())
+    output$timeline <- renderPlotly(timeline())
    
 #histogram 
     histogram <- eventReactive(input$updateButton, {
       quake.graphs <- myQuakes()
- 
-      hist(quake.graphs$mag, 50, col = heat.colors(50), xlab = 'Magnitude', ylab = 'Frequency')
- }
+      plot_ly(x = quake.graphs$mag, type = "histogram") %>%
+        layout(title = "Histogram of the magnitudes frequency",
+               scene = list(
+                 xaxis = list(title = "Magnitude")
+               ))
+  }
 )
- output$magHist <- renderPlot(histogram())
+ output$magHist <- renderPlotly(histogram())
    
 #freqTable 
 freqTable <- eventReactive(input$updateButton, {
@@ -106,6 +112,36 @@ freqTable <- eventReactive(input$updateButton, {
   }
 )
   output$outFrequency <- renderTable(freqTable())
+  
+#scatter plot depth-mag html widget 'plotly'
+scatter_m <- eventReactive(input$updateButton, {
+  quake.graphs <- myQuakes()
+  plot_ly(quake.graphs, x = mag, y = dep, text = paste("Place: ", place),
+          mode = "markers", color = sig, size = mag) %>%
+    layout(title = "Magnitude vs Depth Scatter plot",
+           scene = list(
+             xaxis = list(title = "Magnitude"), 
+             yaxis = list(title = "Depth")
+           ))
+}
+)
+  output$outScatter_m <- renderPlotly(scatter_m())
+  
+#scatter plot time-depth html widget 'plotly'  
+  scatter_d <- eventReactive(input$updateButton, {
+    quake.graphs <- myQuakes()
+    plot_ly(data = quake.graphs, x = Local.Time, y = -dep, size = mag, mode = "markers",
+            color = mag, colors = "Reds") %>%
+      layout(title = "Depth scatter plot over time",
+             scene = list(
+               xaxis = list(title = "Date"), 
+               yaxis = list(title = "Depth")
+             ))
+  }
+  )
+  output$outScatter_d <- renderPlotly(scatter_d())
+  
+  
   
 ## Graphs ##  
 ##-------------------------------------------------------------------------------##
@@ -116,6 +152,21 @@ freqTable <- eventReactive(input$updateButton, {
                                         "</b>to<b>", format(input$dateRange[2], "%d %B %Y"),
                                         "</b>was<b>", nrow(myQuakes()),"</b>.<br>"))
 
+  dt <- function(){
+    eq$Local.Time <- format(eq$Local.Time, "%a %d %b %Y %X %Z")
+    colnames(eq) = head(c('Date and Time',
+                          'Magnitude', 
+                          'Significance', 
+                          'Epicentre',
+                         # 'Tsunami',
+                          'Longitude',
+                          'Latitude',
+                          'Depth'
+                          ), ncol(eq))
+    datatable(eq) #%>% formatDate('Date and Time', "toString")
+     
+  }
+  output$eqtable <- DT::renderDataTable(dt()) #%>% formatDate('Date and Time', "toString"))
 })  
 
   
