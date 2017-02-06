@@ -33,3 +33,5 @@ myData <- function() {
 }
 
 eq <- myData()
+
+saveRDS(eq, file="eq.Rda")
